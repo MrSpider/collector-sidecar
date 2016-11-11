@@ -16,6 +16,8 @@
 package system
 
 import (
+	"strings"
+	"os/exec"
 	"github.com/Graylog2/collector-sidecar/common"
 	"runtime"
 )
@@ -49,4 +51,12 @@ func (inv *Inventory) LinuxPlatform() string {
 	} else {
 		return runtime.GOOS
 	}
+}
+
+func (inv *Inventory) Serial() string {
+	res, err := exec.Command("bash", "-c", "cat /proc/cpuinfo | grep Serial | cut -d ':' -f 2 | tr -d ' '").Output()
+	if err != nil {
+		return "error"
+	}
+	return strings.TrimSpace(string(res[:]))
 }
