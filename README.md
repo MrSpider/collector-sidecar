@@ -14,6 +14,11 @@ Especially the [Step-by-Step](http://docs.graylog.org/en/2.1/pages/collector_sid
 
 ## Installation
 
+| Sidecar version  | Graylog server version |
+| ---------------- | ---------------------- |
+| 0.0.9            | 2.1.x                  |
+| 0.1.x            | 2.2.x                  |
+
 [Download a package](https://github.com/Graylog2/collector-sidecar/releases) and install it on the target system.
 
 
@@ -33,7 +38,12 @@ Create a system service and start it
 
 ```
   $ sudo graylog-collector-sidecar -service install
+
+  [Ubuntu 14.04 with Upstart]
   $ sudo start collector-sidecar
+
+  [Ubuntu 16.04 with Systemd]
+  $ sudo systemctl start collector-sidecar
 ```
 
 **CentOS**
@@ -60,7 +70,7 @@ _**The Windows installation path changed to `C:\Program Files` with version 0.0.
 It's also possible to run the installer in silent mode with
 
 ```
-  $ collector_sidecar_installer.exe /S
+  $ collector_sidecar_installer.exe /S -SERVERURL=http://10.0.2.2:9000/api -TAGS="windows,iis"
 ```
 
 Edit `C:\Program Files\graylog\collector-sidecar\collector_sidecar.yml`.
@@ -80,16 +90,21 @@ Install the NXLog package from the offical download [page](https://nxlog.org/pro
   $ sudo /etc/init.d/nxlog stop
   $ sudo update-rc.d -f nxlog remove
   $ sudo gpasswd -a nxlog adm
-  $ sudo chown -R nxlog.nxlog /var/spool/collector-sidecar/nxlog
  
   $ sudo dpkg -i collector-sidecar_0.1.0-1_amd64.deb
+  $ sudo chown -R nxlog.nxlog /var/spool/collector-sidecar/nxlog
 ```
 
 Edit `/etc/graylog/collector-sidecar/collector_sidecar.yml`accordingly.
 
 ```
   $ sudo graylog-collector-sidecar -service install
+
+  [Ubuntu 14.04 with Upstart]
   $ sudo start collector-sidecar
+
+  [Ubuntu 16.04 with Systemd]
+  $ sudo systemctl start collector-sidecar
 ```
 
 **CentOS**
@@ -144,7 +159,7 @@ Edit `C:\Program Files\graylog\collector-sidecar\collector_sidecar.yml`, you sho
 Run the Sidecar in foreground mode for debugging purposes. Simply call it like this and look out for error messages:
 
 ```
-  $ graylog-collector-sidecar -c /etc/graylog/collector-sidecar/collector_sidecar.yml
+  $ graylog-collector-sidecar -debug -c /etc/graylog/collector-sidecar/collector_sidecar.yml
 ```
 
 ## Configuration

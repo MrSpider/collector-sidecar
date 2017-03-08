@@ -25,6 +25,7 @@ type SidecarConfig struct {
 	NodeId          string   `config:"node_id"`
 	CollectorId     string   `config:"collector_id"`
 	Tags            []string `config:"tags"`
+	CachePath       string   `config:"cache_path"`
 	LogPath         string   `config:"log_path"`
 	LogRotationTime int      `config:"log_rotation_time"`
 	LogMaxAge       int      `config:"log_max_age"`
@@ -39,10 +40,10 @@ type SidecarBackend struct {
 	Enabled           *bool  `config:"enabled"`
 	BinaryPath        string `config:"binary_path"`
 	ConfigurationPath string `config:"configuration_path"`
-	RunPath		  string `config:"run_path"`
+	RunPath           string `config:"run_path"`
 }
 
-func (sc *SidecarConfig) GetIndexByName(name string) (int, error) {
+func (sc *SidecarConfig) GetBackendIndexByName(name string) (int, error) {
 	index := -1
 	for i, backend := range sc.Backends {
 		if backend.Name == name {

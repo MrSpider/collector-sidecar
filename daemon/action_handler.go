@@ -13,31 +13,26 @@
 // You should have received a copy of the GNU General Public License
 // along with Graylog.  If not, see <http://www.gnu.org/licenses/>.
 
-package common
+package daemon
 
 import (
-	"time"
-
-	"github.com/Sirupsen/logrus"
-	"github.com/lestrrat/go-file-rotatelogs"
+	"github.com/Graylog2/collector-sidecar/api/graylog"
 )
 
-var log = logrus.New()
-
-func Log() *logrus.Logger {
-	return log
+func HandleCollectorActions(actions []graylog.ResponseCollectorAction) {
+	for _, action := range actions {
+		switch {
+		case action.Properties["restart"] == true:
+			restartAction(action)
+		}
+	}
 }
 
-func GetRotatedLog(path string, rotation_time int, max_age int) *rotatelogs.RotateLogs {
-	log.Debugf("Creating rotated log writer for: %s", path+".%Y%m%d%H%M")
-
-	writer := rotatelogs.NewRotateLogs(
-		path + ".%Y%m%d%H%M",
-	)
-	writer.LinkName = path
-	writer.RotationTime = time.Duration(rotation_time) * time.Second
-	writer.MaxAge = time.Duration(max_age) * time.Second
-	writer.Offset = 0
-
-	return writer
+func restartAction(action graylog.ResponseCollectorAction) {
+	for name, runner := range Daemon.Runner {
+		if name == action.Backend {
+			log.Infof("[%s] Executing requested collector restart", name)
+			runner.Restart()
+		}
+	}
 }

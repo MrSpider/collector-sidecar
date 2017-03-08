@@ -16,18 +16,19 @@
 package daemon
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sync"
+	"runtime"
+	"sync/atomic"
 	"syscall"
 	"time"
-
-	"github.com/kardianos/service"
 
 	"github.com/Graylog2/collector-sidecar/backends"
 	"github.com/Graylog2/collector-sidecar/common"
 	"github.com/Graylog2/collector-sidecar/context"
+	"github.com/Graylog2/collector-sidecar/logger"
 )
 
 type ExecRunner struct {
@@ -35,12 +36,12 @@ type ExecRunner struct {
 	exec           string
 	args           []string
 	stderr, stdout string
-	isRunning      bool
+	isRunning      atomic.Value
+	isSupervised   atomic.Value
 	restartCount   int
 	startTime      time.Time
 	cmd            *exec.Cmd
-	service        service.Service
-	wg             sync.WaitGroup
+	signals        chan string
 }
 
 func init() {
@@ -58,11 +59,18 @@ func NewExecRunner(backend backends.Backend, context *context.Ctx) Runner {
 		},
 		exec:         backend.ExecPath(),
 		args:         backend.ExecArgs(),
-		isRunning:    false,
 		restartCount: 1,
+		signals:      make(chan string),
 		stderr:       filepath.Join(context.UserConfig.LogPath, backend.Name()+"_stderr.log"),
 		stdout:       filepath.Join(context.UserConfig.LogPath, backend.Name()+"_stdout.log"),
 	}
+
+	// set default state
+	r.setRunning(false)
+	r.setSupervised(false)
+
+	r.signalProcessor()
+	r.startSupervisor()
 
 	return r
 }
@@ -72,19 +80,23 @@ func (r *ExecRunner) Name() string {
 }
 
 func (r *ExecRunner) Running() bool {
-	return r.isRunning
+	return r.isRunning.Load().(bool)
+}
+
+func (r *ExecRunner) setRunning(state bool) {
+	r.isRunning.Store(state)
+}
+
+func (r *ExecRunner) Supervised() bool {
+	return r.isSupervised.Load().(bool)
+}
+
+func (r *ExecRunner) setSupervised(state bool) {
+	r.isSupervised.Store(state)
 }
 
 func (r *ExecRunner) SetDaemon(d *DaemonConfig) {
 	r.daemon = d
-}
-
-func (r *ExecRunner) BindToService(s service.Service) {
-	r.service = s
-}
-
-func (r *ExecRunner) GetService() service.Service {
-	return r.service
 }
 
 func (r *ExecRunner) ValidateBeforeStart() error {
@@ -92,78 +104,113 @@ func (r *ExecRunner) ValidateBeforeStart() error {
 	if err != nil {
 		return backends.SetStatusLogErrorf(r.name, "Failed to find collector executable %q: %v", r.exec, err)
 	}
+	if r.Running() {
+		return errors.New("Failed to start collector, it's already running")
+	}
 	return nil
 }
 
-func (r *ExecRunner) Start(s service.Service) error {
+func (r *ExecRunner) startSupervisor() {
+	r.restartCount = 1
+	go func() {
+		for {
+			// prevent cpu lock
+			time.Sleep(1 * time.Second)
+
+			// ignore regular shutdown
+			if !r.Supervised() {
+				continue
+			}
+
+			// check if process exited
+			if r.Running() {
+				continue
+			}
+
+			// after 60 seconds we can reset the restart counter
+			if time.Since(r.startTime) > 60*time.Second {
+				r.restartCount = 1
+			}
+			// don't continue to restart after 3 tries, stop the supervisor and wait for a configuration update
+			// or manual restart
+			if r.restartCount > 3 {
+				backends.SetStatusLogErrorf(r.name, "Unable to start collector after 3 tries, giving up!")
+				r.setSupervised(false)
+				continue
+			}
+
+			log.Errorf("[%s] Backend finished unexpectedly, trying to restart %d/3.", r.name, r.restartCount)
+			r.restartCount += 1
+			r.Restart()
+		}
+	}()
+}
+
+func (r *ExecRunner) start() error {
 	if err := r.ValidateBeforeStart(); err != nil {
-		log.Error(err.Error())
+		log.Errorf("[%s] %s", r.Name(), err)
 		return err
 	}
 
-	r.restartCount = 1
-	r.wg.Add(1)
-	go func() {
-		defer r.wg.Done()
-		for {
-			r.cmd = exec.Command(r.exec, r.args...)
-			r.cmd.Dir = r.daemon.Dir
-			r.cmd.Env = append(os.Environ(), r.daemon.Env...)
-			r.startTime = time.Now()
-			r.run()
+	// setup process environment
+	r.cmd = exec.Command(r.exec, r.args...)
+	r.cmd.Dir = r.daemon.Dir
+	r.cmd.Env = append(os.Environ(), r.daemon.Env...)
 
-			// A backend should stay alive longer than 3 seconds
-			if time.Since(r.startTime) < 3*time.Second {
-				backends.SetStatusLogErrorf(r.name, "Collector exits immediately, this should not happen! Please check your collector configuration!")
-			}
-			// After 60 seconds we can reset the restart counter
-			if time.Since(r.startTime) > 60*time.Second {
-				r.restartCount = 0
-			}
-			if r.restartCount <= 3 && r.isRunning {
-				log.Errorf("[%s] Backend crashed, trying to restart %d/3", r.name, r.restartCount)
-				time.Sleep(5 * time.Second)
-				r.restartCount += 1
-				continue
-				// giving up
-			} else if r.restartCount > 3 {
-				backends.SetStatusLogErrorf(r.name, "Collector failed to start after 3 tries!")
-			}
+	// start the actual process and don't block
+	r.startTime = time.Now()
+	r.run()
 
-			r.isRunning = false
-			break
-		}
-	}()
+	r.setSupervised(true)
 	return nil
 }
 
-func (r *ExecRunner) Stop(s service.Service) error {
+func (r *ExecRunner) Shutdown() error {
+	r.signals <- "shutdown"
+	return nil
+}
+
+func (r *ExecRunner) stop() error {
+	// deactivate supervisor
+	r.setSupervised(false)
+
+	// if the command hasn't been started yet or doesn't run anymore, just return
+	if r.cmd == nil || r.cmd.Process == nil {
+		return nil
+	}
+
 	log.Infof("[%s] Stopping", r.name)
 
-	// deactivate supervisor
-	r.isRunning = false
-
 	// give the chance to cleanup resources
-	if r.cmd.Process != nil {
+	if r.cmd.Process != nil && runtime.GOOS != "windows"{
 		r.cmd.Process.Signal(syscall.SIGHUP)
 	}
 	time.Sleep(2 * time.Second)
 
 	// in doubt kill the process
 	if r.cmd.Process != nil {
-		r.cmd.Process.Kill()
+		log.Debugf("[%s] SIGHUP ignored, killing process", r.Name())
+		err := r.cmd.Process.Kill()
+		if err != nil {
+			log.Debugf("[%s] Failed to kill process %s", r.Name(), err)
+		}
 	}
-
-	// wait for background routine to finish
-	r.wg.Wait()
 
 	return nil
 }
 
-func (r *ExecRunner) Restart(s service.Service) error {
-	r.Stop(s)
-	time.Sleep(2 * time.Second)
-	r.Start(s)
+func (r *ExecRunner) Restart() error {
+	r.signals <- "restart"
+	return nil
+}
+
+func (r *ExecRunner) restart() error {
+	r.stop()
+	for timeout := 0; r.Running() || timeout >= 5; timeout++ {
+		log.Debugf("[%s] waiting for process to finish...", r.Name())
+		time.Sleep(1 * time.Second)
+	}
+	r.start()
 
 	return nil
 }
@@ -177,7 +224,7 @@ func (r *ExecRunner) run() {
 			backends.SetStatusLogErrorf(r.name, "Failed to create path to collector's stderr log: %s", r.stderr)
 		}
 
-		f := common.GetRotatedLog(r.stderr, r.context.UserConfig.LogRotationTime, r.context.UserConfig.LogMaxAge)
+		f := logger.GetRotatedLog(r.stderr, r.context.UserConfig.LogRotationTime, r.context.UserConfig.LogMaxAge)
 		defer f.Close()
 		r.cmd.Stderr = f
 	}
@@ -187,14 +234,40 @@ func (r *ExecRunner) run() {
 			backends.SetStatusLogErrorf(r.name, "Failed to create path to collector's stdout log: %s", r.stdout)
 		}
 
-		f := common.GetRotatedLog(r.stderr, r.context.UserConfig.LogRotationTime, r.context.UserConfig.LogMaxAge)
+		f := logger.GetRotatedLog(r.stderr, r.context.UserConfig.LogRotationTime, r.context.UserConfig.LogMaxAge)
 		defer f.Close()
 		r.cmd.Stdout = f
 	}
 
-	r.isRunning = true
 	r.backend.SetStatus(backends.StatusRunning, "Running")
-	r.cmd.Run()
+	err := r.cmd.Start()
+	if err != nil {
+		backends.SetStatusLogErrorf(r.name, "Failed to start collector: %s", err)
+	}
 
-	return
+	// wait for process exit in the background. Ensure single cmd.Wait() call
+	go func() {
+		r.setRunning(true)
+		r.cmd.Wait()
+		r.setRunning(false)
+	}()
+}
+
+// process signals sequentially to prevent race conditions with the supervisor
+func (r *ExecRunner) signalProcessor() {
+	go func() {
+		seq := 0
+		for {
+			cmd := <-r.signals
+			seq++
+			log.Debugf("[signal-processor] (seq=%d) handling cmd: %v", seq, cmd)
+			switch cmd {
+			case "restart":
+				r.restart()
+			case "shutdown":
+				r.stop()
+			}
+			log.Debugf("[signal-processor] (seq=%d) cmd done: %v", seq, cmd)
+		}
+	}()
 }

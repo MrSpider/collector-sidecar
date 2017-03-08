@@ -16,12 +16,18 @@
 package filebeat
 
 import (
+	"errors"
+	"fmt"
+	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 
 	"github.com/Graylog2/collector-sidecar/backends"
 	"github.com/Graylog2/collector-sidecar/common"
 	"github.com/Graylog2/collector-sidecar/context"
 	"github.com/Graylog2/collector-sidecar/system"
+	"github.com/Graylog2/collector-sidecar/logger"
 )
 
 const (
@@ -30,7 +36,7 @@ const (
 )
 
 var (
-	log           = common.Log()
+	log           = logger.Log()
 	backendStatus = system.Status{}
 )
 
@@ -73,11 +79,51 @@ func (fbc *FileBeatConfig) ConfigurationPath() string {
 	return configurationPath
 }
 
+func (fbc *FileBeatConfig) CachePath() string {
+	cachePath := fbc.Beats.Context.UserConfig.CachePath
+	if !common.IsDir(filepath.Dir(cachePath)) {
+		err := common.CreatePathToFile(cachePath)
+		if err != nil {
+			log.Fatal("Configured path to cache directory does not exist: " + cachePath)
+		}
+	}
+
+	return filepath.Join(cachePath, "filebeat", "data")
+}
+
 func (fbc *FileBeatConfig) ExecArgs() []string {
 	return []string{"-c", fbc.ConfigurationPath()}
 }
 
+func (fbc *FileBeatConfig) readVersion() ([]int, error) {
+	var version = []int{}
+	output, err := exec.Command(fbc.ExecPath(), "-version").CombinedOutput()
+	versionString := string(output)
+	if err != nil {
+		return nil, errors.New(fmt.Sprintf("[%s] Error while fetching Beats collector version: %s", fbc.Name(), versionString))
+	}
+	re := regexp.MustCompile(`(\d+)\.(\d+)\.(\d+)`)
+	versions := re.FindStringSubmatch(versionString)[1:4] // ["1.2.3", "1", "2", "3"]
+
+	for _, value := range versions {
+		digit, err := strconv.Atoi(value)
+		if err != nil {
+			return nil, errors.New(fmt.Sprintf("[%s] Error converting Beats collector version: %s", fbc.Name(), versionString))
+		}
+		version = append(version, digit)
+	}
+	return version, nil
+}
+
 func (fbc *FileBeatConfig) ValidatePreconditions() bool {
+	version, err := fbc.readVersion()
+	if err != nil {
+		log.Errorf("[%s] Validation failed, skipping backend: %s", fbc.Name(), err)
+	}
+	if version[0] < 1 || version[0] > 5 {
+		log.Errorf("[%s] Unsupported Filebeats version, please install 5.x", fbc.Name())
+	}
+	fbc.Beats.Version = version
 	return true
 }
 

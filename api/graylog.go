@@ -26,15 +26,16 @@ import (
 	"github.com/Graylog2/collector-sidecar/api/graylog"
 	"github.com/Graylog2/collector-sidecar/api/rest"
 	"github.com/Graylog2/collector-sidecar/backends"
+	"github.com/Graylog2/collector-sidecar/cfgfile"
 	"github.com/Graylog2/collector-sidecar/common"
 	"github.com/Graylog2/collector-sidecar/context"
 	"github.com/Graylog2/collector-sidecar/daemon"
 	"github.com/Graylog2/collector-sidecar/system"
-	"github.com/Graylog2/collector-sidecar/cfgfile"
+	"github.com/Graylog2/collector-sidecar/logger"
 )
 
 var (
-	log = common.Log()
+	log                   = logger.Log()
 	configurationOverride = false
 )
 
@@ -54,7 +55,7 @@ func RequestConfiguration(httpClient *http.Client, checksum string, ctx *context
 		}
 	}
 
-	r, err := c.NewRequest("GET", "/plugins/org.graylog.plugins.collector/"+ ctx.CollectorId, params, nil)
+	r, err := c.NewRequest("GET", "/plugins/org.graylog.plugins.collector/"+ctx.CollectorId, params, nil)
 	if err != nil {
 		msg := "Can not initialize REST request"
 		system.GlobalStatus.Set(backends.StatusError, msg)
@@ -121,7 +122,7 @@ func UpdateRegistration(httpClient *http.Client, ctx *context.Ctx, status *grayl
 		}
 	}
 
-	r, err := c.NewRequest("PUT", "/plugins/org.graylog.plugins.collector/collectors/"+ ctx.CollectorId, nil, registration)
+	r, err := c.NewRequest("PUT", "/plugins/org.graylog.plugins.collector/collectors/"+ctx.CollectorId, nil, registration)
 	if err != nil {
 		log.Error("[UpdateRegistration] Can not initialize REST request")
 		return
@@ -138,9 +139,14 @@ func UpdateRegistration(httpClient *http.Client, ctx *context.Ctx, status *grayl
 		log.Error("[UpdateRegistration] Failed to report collector status to server: ", err)
 	}
 
-	// Update configuration based on server response
-	if (graylog.ResponseCollectorRegistration{}) != *respBody {
+	// Update configuration if provided
+	if respBody.Configuration != (graylog.ResponseCollectorRegistrationConfiguration{}) {
 		updateRuntimeConfiguration(respBody, ctx)
+	}
+
+	// Run collector actions if provided
+	if len(respBody.CollectorActions) != 0 {
+		daemon.HandleCollectorActions(respBody.CollectorActions)
 	}
 }
 

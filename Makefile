@@ -2,16 +2,19 @@ GO ?= go
 GOFMT ?= gofmt
 AWK ?= awk
 
-COLLECTOR_VERSION = $(shell grep CollectorVersion common/metadata.go | $(AWK) '{gsub(/"/, "", $$3); print $$3}')
+include version.mk
 ifeq ($(strip $(COLLECTOR_VERSION)),)
 $(error COLLECTOR_VERSION is not set)
 endif
 
 GIT_REV=$(shell git rev-parse --short HEAD)
-BUILD_OPTS = -ldflags "-s -X github.com/Graylog2/collector-sidecar/common.GitRevision=$(GIT_REV)"
+BUILD_OPTS = -ldflags "-s -X github.com/Graylog2/collector-sidecar/common.GitRevision=$(GIT_REV) -X github.com/Graylog2/collector-sidecar/common.CollectorVersion=$(COLLECTOR_VERSION) -X github.com/Graylog2/collector-sidecar/common.CollectorVersionSuffix=$(COLLECTOR_VERSION_SUFFIX)"
 
 TEST_SUITE = \
 	github.com/Graylog2/collector-sidecar/backends/nxlog \
+	github.com/Graylog2/collector-sidecar/backends/beats \
+	github.com/Graylog2/collector-sidecar/backends/beats/filebeat \
+	github.com/Graylog2/collector-sidecar/backends/beats/winlogbeat \
 	github.com/Graylog2/collector-sidecar/common
 
 all: clean misc build
@@ -28,6 +31,7 @@ clean: ## Remove binaries
 	@rm -rf dist/tmp-build
 	@rm -rf dist/tmp-dest
 	@rm -rf dist/pkg
+	@rm -rf dist/collectors
 
 deps: glide
 	./glide install
@@ -77,6 +81,10 @@ build-darwin: ## Build collector-sidecar binary for OSX
 	@mkdir -p build/$(COLLECTOR_VERSION)/darwin/amd64
 	GOOS=darwin GOARCH=amd64 $(GO) build $(BUILD_OPTS) -v -i -o build/$(COLLECTOR_VERSION)/darwin/amd64/graylog-collector-sidecar
 
+build-freebsd:
+	@mkdir -p build/$(COLLECTOR_VERSION)/freebsd/amd64
+	GOOS=freebsd GOARCH=amd64 $(GO) build $(BUILD_OPTS) -v -i -o build/$(COLLECTOR_VERSION)/freebsd/amd64/graylog-collector-sidecar
+
 build-windows: ## Build collector-sidecar binary for Windows
 	@mkdir -p build/$(COLLECTOR_VERSION)/windows/amd64
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc $(GO) build $(BUILD_OPTS) -pkgdir $(HOME)/.go_win -v -i -o build/$(COLLECTOR_VERSION)/windows/amd64/graylog-collector-sidecar.exe
@@ -85,7 +93,7 @@ build-windows32: ## Build collector-sidecar binary for Windows 32bit
 	@mkdir -p build/$(COLLECTOR_VERSION)/windows/386
 	GOOS=windows GOARCH=386 CGO_ENABLED=1 CC=i686-w64-mingw32-gcc $(GO) build $(BUILD_OPTS) -pkgdir $(HOME)/.go_win32 -v -i -o build/$(COLLECTOR_VERSION)/windows/386/graylog-collector-sidecar.exe
 
-package-all: prepare-package package-linux package-linux32 package-windows package-windows32 package-tar
+package-all: prepare-package package-linux package-linux32 package-windows package-tar
 
 prepare-package:
 	@dist/fetch_collectors.sh
@@ -104,15 +112,11 @@ package-linux32: ## Create Linux system package for 32bit hosts
 
 package-windows: ## Create Windows installer
 	@mkdir -p dist/pkg
-	@makensis dist/recipe.nsi
-
-package-windows32: ## Create Windows installer for 32bit hosts
-	@mkdir -p dist/pkg
-	@makensis -Dwin32 dist/recipe.nsi
+	@makensis -DVERSION=$(COLLECTOR_VERSION) -DVERSION_SUFFIX=$(COLLECTOR_VERSION_SUFFIX) -DREVISION=$(COLLECTOR_REVISION) dist/recipe.nsi
 
 package-tar: ## Create tar archive for all platforms
 	@mkdir -p dist/pkg
-	@tar --transform="s|/build|/collector-sidecar|" -Pczf dist/pkg/collector-sidecar-$(COLLECTOR_VERSION).tar.gz ./build
+	@tar --transform="s|/build|/collector-sidecar|" -Pczf dist/pkg/collector-sidecar-$(COLLECTOR_VERSION)$(COLLECTOR_VERSION_SUFFIX).tar.gz ./build
 
 help:
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | $(AWK) 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'

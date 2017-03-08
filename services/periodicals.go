@@ -16,18 +16,18 @@
 package services
 
 import (
-	"time"
 	"net/http"
+	"time"
 
 	"github.com/Graylog2/collector-sidecar/api"
 	"github.com/Graylog2/collector-sidecar/api/rest"
 	"github.com/Graylog2/collector-sidecar/backends"
-	"github.com/Graylog2/collector-sidecar/common"
 	"github.com/Graylog2/collector-sidecar/context"
 	"github.com/Graylog2/collector-sidecar/daemon"
+	"github.com/Graylog2/collector-sidecar/logger"
 )
 
-var log = common.Log()
+var log = logger.Log()
 var httpClient *http.Client
 
 func StartPeriodicals(context *context.Ctx) {
@@ -76,14 +76,7 @@ func checkForUpdateAndRestart(httpClient *http.Client, checksum string, context 
 				continue
 			}
 
-			if runner.Running() {
-				// collector was already started so a Restart will not fail
-				err = runner.Restart(runner.GetService())
-			} else {
-				// collector is not running, we do a fresh start
-				err = runner.Start(runner.GetService())
-			}
-			if err != nil {
+			if err := runner.Restart(); err != nil {
 				msg := "Failed to restart collector"
 				backend.SetStatus(backends.StatusError, msg)
 				log.Errorf("[%s] %s: %v", name, msg, err)

@@ -1,9 +1,11 @@
+require_relative 'tools'
+
 class GraylogSidecar < FPM::Cookery::Recipe
   description 'Graylog collector sidecar'
 
   name     'collector-sidecar'
-  version  '0.1.0'
-  revision '1'
+  version  data.version
+  revision data.revision
   homepage 'https://graylog.org'
   arch     'amd64'
 
@@ -22,7 +24,7 @@ class GraylogSidecar < FPM::Cookery::Recipe
 
   def install
     bin.install 'graylog-collector-sidecar'
-    bin.install '../../collectors/filebeat/x86_64/filebeat'
+    bin.install '../../collectors/filebeat/linux/x86_64/filebeat'
     etc('graylog/collector-sidecar').install '../../../collector_sidecar.yml'
     etc('graylog/collector-sidecar/generated').mkdir
     var('log/graylog/collector-sidecar').mkdir

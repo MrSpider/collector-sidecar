@@ -1,6 +1,7 @@
 package: main
 import:
 - package: github.com/Sirupsen/logrus
+  version: v0.11.0
 - package: github.com/kardianos/service
 - package: golang.org/x/sys
   subpackages:
@@ -16,3 +17,4 @@ import:
 - package: github.com/lestrrat/go-file-rotatelogs
 - package: bitbucket.org/tebeka/strftime
 - package: github.com/elastic/gosigar
+- package: github.com/rifflock/lfshook

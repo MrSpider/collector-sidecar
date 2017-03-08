@@ -16,8 +16,14 @@
 package graylog
 
 type ResponseCollectorRegistration struct {
-	Configuration         ResponseCollectorRegistrationConfiguration  `json:"configuration"`
-	ConfigurationOverride bool 					  `json:"configuration_override"`
+	Configuration         ResponseCollectorRegistrationConfiguration `json:"configuration"`
+	ConfigurationOverride bool                                       `json:"configuration_override"`
+	CollectorActions      []ResponseCollectorAction			 `json:"actions,omitempty"`
+}
+
+type ResponseCollectorAction struct {
+	Backend string `json:"backend"`
+	Properties map[string]interface{} `json:"properties"`
 }
 
 type ResponseCollectorRegistrationConfiguration struct {
